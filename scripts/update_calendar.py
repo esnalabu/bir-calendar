@@ -6,10 +6,10 @@ import os
 import re
 import sys
 import tomllib
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
 from urllib.parse import urljoin
 
 import requests
@@ -122,6 +122,7 @@ class CalendarConfig:
     calendar_id: str
     r_id: str | None = None
     output: str | None = None
+    categories: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,36 @@ def normalize_category(value: str) -> str | None:
     if "glass" in text:
         return "glass"
     return None
+
+
+def parse_categories(
+    value: str | Iterable[str] | None,
+) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw_values: Iterable[str] = value.split(",")
+    elif isinstance(value, Iterable):
+        raw_values = value
+    else:
+        raise ValueError(
+            "categories må vere ei liste eller ein kommaseparert streng."
+        )
+
+    categories: list[str] = []
+    for raw_value in raw_values:
+        text = str(raw_value).strip()
+        if not text:
+            continue
+        category = normalize_category(text)
+        if category is None:
+            valid = ", ".join(sorted(CATEGORY_LABELS))
+            raise ValueError(
+                f"Ukjend kategori {text!r}. Gyldige kategoriar: {valid}."
+            )
+        if category not in categories:
+            categories.append(category)
+    return tuple(categories) or None
 
 
 def category_label(category: str) -> str:
@@ -445,6 +476,16 @@ def project_pickups(
         result.values(),
         key=lambda pickup: (pickup.day, category_label(pickup.category)),
     )
+
+
+def filter_pickups(
+    pickups: Iterable[Pickup],
+    categories: tuple[str, ...] | None,
+) -> list[Pickup]:
+    if categories is None:
+        return list(pickups)
+    allowed = set(categories)
+    return [pickup for pickup in pickups if pickup.category in allowed]
 
 
 def build_session() -> requests.Session:
@@ -757,28 +798,40 @@ def load_config(path: Path) -> tuple[int, list[CalendarConfig]]:
                 calendar_id=str(entry.get("calendar_id") or ""),
                 r_id=str(entry["r_id"]) if entry.get("r_id") else None,
                 output=str(entry["output"]) if entry.get("output") else None,
+                categories=parse_categories(entry.get("categories")),
             )
         )
 
     env_address = os.environ.get("BIR_ADDRESS", "").strip()
     env_calendar_id = os.environ.get("BIR_CALENDAR_ID", "").strip()
+    env_rid = os.environ.get("BIR_RID", "").strip() or None
+    env_categories_raw = os.environ.get("BIR_CATEGORIES", "").strip()
+    env_categories = (
+        parse_categories(env_categories_raw) if env_categories_raw else None
+    )
     if not calendars and env_address and env_calendar_id:
         calendars.append(
             CalendarConfig(
                 name=os.environ.get("BIR_NAME", "BIR").strip() or "BIR",
                 address=env_address,
                 calendar_id=env_calendar_id,
-                r_id=os.environ.get("BIR_RID", "").strip() or None,
+                r_id=env_rid,
+                categories=env_categories,
             )
         )
-    elif calendars and (env_address or env_calendar_id or os.environ.get("BIR_RID")):
+    elif calendars and (
+        env_address or env_calendar_id or env_rid or env_categories_raw
+    ):
         first = calendars[0]
         calendars[0] = replace(
             first,
             name=os.environ.get("BIR_NAME", first.name).strip() or first.name,
             address=env_address or first.address,
             calendar_id=env_calendar_id or first.calendar_id,
-            r_id=os.environ.get("BIR_RID", "").strip() or first.r_id,
+            r_id=env_rid or first.r_id,
+            categories=(
+                env_categories if env_categories is not None else first.categories
+            ),
         )
 
     if not calendars:
@@ -927,12 +980,15 @@ def main(argv: list[str] | None = None) -> int:
                             f"{safe_error(exc, private_values)}"
                         )
 
-                pickups = project_pickups(
-                    api_pickups,
-                    schedules,
-                    extra_pickups,
-                    today,
-                    horizon_end,
+                pickups = filter_pickups(
+                    project_pickups(
+                        api_pickups,
+                        schedules,
+                        extra_pickups,
+                        today,
+                        horizon_end,
+                    ),
+                    calendar.categories,
                 )
                 if len(pickups) < args.min_events:
                     raise RuntimeError(

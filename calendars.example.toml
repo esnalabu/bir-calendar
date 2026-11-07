@@ -15,3 +15,7 @@ calendar_id = "00000000-0000-0000-0000-000000000000"
 
 # Valfritt. Standard er calendar-1.ics.
 output = "bir-kalender.ics"
+
+# Valfritt. Viss han manglar, blir alle kategoriar inkluderte.
+# Gyldige verdiar: restavfall, matavfall, papir, plast, glass.
+# categories = ["restavfall", "papir", "glass"]

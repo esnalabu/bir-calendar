@@ -62,6 +62,7 @@ address = "Adresse 1, 5000 Bergen"
 r_id = "00000000-0000-0000-0000-000000000000"
 calendar_id = "00000000-0000-0000-0000-000000000000"
 output = "bir-kalender.ics"
+# categories = ["restavfall", "papir", "glass"]
 ```
 
 Felta har denne tydinga:
@@ -73,6 +74,10 @@ Felta har denne tydinga:
   Verdien blir hasha før bruk i UID-ane i ICS-fila.
 - `output` er valfri og er filnamnet i output-mappa. Standard er
   `calendar-1.ics`.
+- `categories` er valfri og er ei liste over kategoriar som skal inkluderast.
+  Viss ho manglar, blir alle kategoriar med. Gyldige verdiar er `restavfall`,
+  `matavfall`, `papir`, `plast` og `glass`. `papir` dekkjer «papir og
+  plastemballasje».
 - `months` er valfri og er talet på kalendermånader som skal genererast.
   Standard er 3.
 
@@ -111,6 +116,11 @@ matrix-lista kvar måndag og publiserer dei samla til GitHub Pages.
      eigedoms-ID-en slått opp via adressa.
    - `BIR_CALENDAR_ID`: tilfeldig og stabil ID, til dømes ein UUID
    - `CALENDAR_PATH`: tilfeldig og stabil sti, til dømes 32 hex-teikn + `.ics`
+
+   Legg eventuelt også inn environment-variabelen `BIR_CATEGORIES` (ikkje
+   secret) med ei kommaseparert liste, til dømes `restavfall,papir,glass`.
+   Viss han ikkje er sett, blir alle kategoriar inkluderte. Dersom du ikkje
+   leverer matavfall er `restavfall,papir,glass` rett liste.
 
 5. Lag `CALENDAR_PATH` med:
 
@@ -156,6 +166,9 @@ kalenderen må vere privat.
   projiserte ut frå repetisjonen og kan bli feil ved ruteendringar.
 - Viss kalenderen blir tom, bør du kontrollere `address` og `r_id`. Du kan også
   prøve `--min-events 1` for å sjå om det blir generert nokon hendingar.
+- Viss kategoriar manglar, kontroller `categories` i `calendars.toml` eller
+  `BIR_CATEGORIES` i GitHub Actions. `--min-events` tel hendingar etter
+  filtrering.
 - Viss CI seier at `CALENDAR_PATH` manglar, legg til eit environment-secret med
   eit tilfeldig filnamn som endar med `.ics`.
 - Viss CI seier at `CALENDAR_PATH` har ugyldig format, bruk berre bokstavar,

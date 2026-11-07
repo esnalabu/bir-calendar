@@ -42,6 +42,23 @@ def test_normalize_category_aliases():
     assert uc.normalize_category("Ukjend") is None
 
 
+def test_parse_categories_accepts_aliases_and_deduplicates():
+    assert uc.parse_categories(
+        "Restavfall, Papir og plastemballasje, Glass og metall, restavfall"
+    ) == ("restavfall", "papir", "glass")
+    assert uc.parse_categories(["matavfall", "plast"]) == (
+        "matavfall",
+        "plast",
+    )
+    assert uc.parse_categories("") is None
+    assert uc.parse_categories(None) is None
+
+
+def test_parse_categories_rejects_unknown_category():
+    with pytest.raises(ValueError, match="Ukjend kategori"):
+        uc.parse_categories("kompost")
+
+
 def test_parse_frequency():
     assert uc.parse_frequency("Tømmes mandager") == (1, 0)
     assert uc.parse_frequency("Tømmes hver 2. onsdag") == (2, 2)
@@ -210,6 +227,21 @@ def test_project_pickups_uses_schedule_without_api():
     assert date(2027, 1, 15) in dates_for(pickups, "glass")
 
 
+def test_filter_pickups_excludes_matavfall():
+    schedules = uc.parse_address_page(
+        read_fixture("address_page.html"), TODAY
+    )
+    pickups = uc.project_pickups([], schedules, [], TODAY, HORIZON_END)
+
+    filtered = uc.filter_pickups(
+        pickups, ("restavfall", "papir", "glass")
+    )
+
+    assert len(filtered) == 17
+    assert all(pickup.category != "matavfall" for pickup in filtered)
+    assert uc.filter_pickups(pickups, None) == pickups
+
+
 def test_build_calendar_is_generic_and_all_day():
     pickup = uc.Pickup(date(2026, 11, 9), "restavfall", "api")
     content = uc.build_calendar(
@@ -343,6 +375,7 @@ def test_write_atomic_replaces_file_with_valid_content(tmp_path):
 
 def test_load_config_from_environment(tmp_path, monkeypatch):
     monkeypatch.delenv("CALENDAR_MONTHS", raising=False)
+    monkeypatch.delenv("BIR_CATEGORIES", raising=False)
     monkeypatch.setenv("BIR_NAME", "Testkalender")
     monkeypatch.setenv("BIR_ADDRESS", "Testvegen 1")
     monkeypatch.setenv("BIR_RID", "test-r-id")
@@ -359,6 +392,79 @@ def test_load_config_from_environment(tmp_path, monkeypatch):
             r_id="test-r-id",
         )
     ]
+
+
+def test_load_config_categories_from_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv("CALENDAR_MONTHS", raising=False)
+    monkeypatch.delenv("BIR_NAME", raising=False)
+    monkeypatch.delenv("BIR_RID", raising=False)
+    monkeypatch.setenv("BIR_ADDRESS", "Testvegen 1")
+    monkeypatch.setenv("BIR_CALENDAR_ID", "test-calendar-id")
+    monkeypatch.setenv(
+        "BIR_CATEGORIES", "restavfall, Papir og plastemballasje, glass"
+    )
+
+    _, calendars = uc.load_config(tmp_path / "missing.toml")
+
+    assert calendars[0].categories == ("restavfall", "papir", "glass")
+
+
+def test_load_config_categories_from_toml(tmp_path, monkeypatch):
+    monkeypatch.delenv("CALENDAR_MONTHS", raising=False)
+    monkeypatch.delenv("BIR_ADDRESS", raising=False)
+    monkeypatch.delenv("BIR_RID", raising=False)
+    monkeypatch.delenv("BIR_CALENDAR_ID", raising=False)
+    monkeypatch.delenv("BIR_CATEGORIES", raising=False)
+    config = tmp_path / "calendars.toml"
+    config.write_text(
+        "\n".join(
+            [
+                "[[calendars]]",
+                'address = "Testvegen 1"',
+                'calendar_id = "test-calendar-id"',
+                'categories = ["restavfall", "papir", "glass"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _, calendars = uc.load_config(config)
+
+    assert calendars[0].categories == ("restavfall", "papir", "glass")
+
+
+def test_bir_categories_environment_overrides_toml(tmp_path, monkeypatch):
+    monkeypatch.delenv("CALENDAR_MONTHS", raising=False)
+    monkeypatch.delenv("BIR_ADDRESS", raising=False)
+    monkeypatch.delenv("BIR_RID", raising=False)
+    monkeypatch.delenv("BIR_CALENDAR_ID", raising=False)
+    monkeypatch.setenv("BIR_CATEGORIES", "restavfall")
+    config = tmp_path / "calendars.toml"
+    config.write_text(
+        "\n".join(
+            [
+                "[[calendars]]",
+                'address = "Testvegen 1"',
+                'calendar_id = "test-calendar-id"',
+                'categories = ["matavfall"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _, calendars = uc.load_config(config)
+
+    assert calendars[0].categories == ("restavfall",)
+
+
+def test_load_config_rejects_unknown_category(tmp_path, monkeypatch):
+    monkeypatch.delenv("CALENDAR_MONTHS", raising=False)
+    monkeypatch.setenv("BIR_ADDRESS", "Testvegen 1")
+    monkeypatch.setenv("BIR_CALENDAR_ID", "test-calendar-id")
+    monkeypatch.setenv("BIR_CATEGORIES", "kompost")
+
+    with pytest.raises(ValueError, match="Ukjend kategori"):
+        uc.load_config(tmp_path / "missing.toml")
 
 
 def test_horizon_end_covers_three_calendar_months():

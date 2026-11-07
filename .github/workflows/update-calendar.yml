@@ -120,6 +120,7 @@ jobs:
           BIR_ADDRESS: ${{ secrets.BIR_ADDRESS }}
           BIR_RID: ${{ secrets.BIR_RID }}
           BIR_CALENDAR_ID: ${{ secrets.BIR_CALENDAR_ID }}
+          BIR_CATEGORIES: ${{ vars.BIR_CATEGORIES }}
           CALENDAR_PATH: ${{ secrets.CALENDAR_PATH }}
         run: |
           uv run python scripts/update_calendar.py \
