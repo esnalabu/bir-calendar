@@ -128,7 +128,7 @@ jobs:
             --min-events 4
 
       - name: Last opp kalender-artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: calendar-${{ matrix.calendar }}
           path: _site/
@@ -147,7 +147,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Last ned kalenderartifakt
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: calendar-*
           path: _site
