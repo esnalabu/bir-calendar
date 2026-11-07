@@ -1,0 +1,17 @@
+# Kopier denne fila til calendars.toml og fyll inn verdiar.
+# calendars.toml er gitignorert fordi ho inneheld adresse og rId.
+
+months = 3
+
+[[calendars]]
+address = "Adresse 1, 5000 Bergen"
+
+# Valfritt. Viss r_id manglar, blir han slått opp via BIR sitt adressesøk.
+# r_id = "00000000-0000-0000-0000-000000000000"
+
+# Tilfeldig og stabil ID. Lag ein med:
+#   python -c "import uuid; print(uuid.uuid4())"
+calendar_id = "00000000-0000-0000-0000-000000000000"
+
+# Valfritt. Standard er calendar-1.ics.
+output = "bir-kalender.ics"

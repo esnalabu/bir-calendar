@@ -1,0 +1,169 @@
+name: Oppdater BIR-kalender
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-bir-calendar
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    steps:
+      - name: Hent repo
+        uses: actions/checkout@v7
+
+      - name: Sjekk at calendars.toml ikkje er committa
+        run: |
+          if git ls-files --error-unmatch calendars.toml >/dev/null 2>&1; then
+            echo "calendars.toml er committa. Fjern ho frå repoet før workflowen køyrer." >&2
+            exit 1
+          fi
+
+      - name: Set opp uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Installer Python og avhengigheiter
+        run: |
+          uv python install 3.12
+          uv sync --locked
+
+      - name: Køyr testar
+        run: uv run pytest -q
+
+  update:
+    needs: test
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    environment: ${{ matrix.calendar }}
+    strategy:
+      fail-fast: false
+      matrix:
+        calendar:
+          - default
+    steps:
+      - name: Hent repo
+        uses: actions/checkout@v7
+
+      - name: Set opp uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Installer Python og avhengigheiter
+        run: |
+          uv python install 3.12
+          uv sync --locked
+
+      - name: Sjekk kalenderkonfigurasjon
+        env:
+          BIR_ADDRESS: ${{ secrets.BIR_ADDRESS }}
+          BIR_CALENDAR_ID: ${{ secrets.BIR_CALENDAR_ID }}
+          CALENDAR_PATH: ${{ secrets.CALENDAR_PATH }}
+        run: |
+          missing=0
+          if [ -z "$BIR_ADDRESS" ]; then
+            echo "BIR_ADDRESS er ikkje sett for environmentet '${{ matrix.calendar }}'." >&2
+            missing=1
+          fi
+          if [ -z "$BIR_CALENDAR_ID" ]; then
+            echo "BIR_CALENDAR_ID er ikkje sett for environmentet '${{ matrix.calendar }}'." >&2
+            missing=1
+          fi
+          if [ -z "$CALENDAR_PATH" ]; then
+            echo "CALENDAR_PATH er ikkje sett for environmentet '${{ matrix.calendar }}'." >&2
+            echo "Legg til eit environment-secret CALENDAR_PATH med eit tilfeldig filnamn, til dømes 32 hex-teikn + .ics." >&2
+            missing=1
+          else
+            case "$CALENDAR_PATH" in
+              /*|*..*|*[!A-Za-z0-9._/-]*)
+                echo "CALENDAR_PATH har ugyldig format. Bruk berre bokstavar, tal, punktum, bindestrek, understrek og skråstrek, utan '..' eller leiande '/'." >&2
+                missing=1
+                ;;
+            esac
+            case "$CALENDAR_PATH" in
+              *.ics) ;;
+              *)
+                echo "CALENDAR_PATH må ende med .ics." >&2
+                missing=1
+                ;;
+            esac
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Hent førre publiserte kalender
+        env:
+          CALENDAR_PATH: ${{ secrets.CALENDAR_PATH }}
+          PAGES_BASE_URL: https://esnalabu.github.io/bir-calendar
+        run: |
+          mkdir -p "_site/$(dirname "$CALENDAR_PATH")"
+          if curl -fsSL --max-time 30 "$PAGES_BASE_URL/$CALENDAR_PATH" -o "_site/$CALENDAR_PATH"; then
+            echo "Henta førre publiserte kalender."
+          else
+            rm -f "_site/$CALENDAR_PATH"
+            echo "Fann ikkje førre publiserte kalender; alle hendingar får nytt DTSTAMP." >&2
+          fi
+
+      - name: Oppdater kalender
+        env:
+          BIR_ADDRESS: ${{ secrets.BIR_ADDRESS }}
+          BIR_RID: ${{ secrets.BIR_RID }}
+          BIR_CALENDAR_ID: ${{ secrets.BIR_CALENDAR_ID }}
+          CALENDAR_PATH: ${{ secrets.CALENDAR_PATH }}
+        run: |
+          uv run python scripts/update_calendar.py \
+            --output "_site/$CALENDAR_PATH" \
+            --min-events 4
+
+      - name: Last opp kalender-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calendar-${{ matrix.calendar }}
+          path: _site/
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: update
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Last ned kalenderartifakt
+        uses: actions/download-artifact@v4
+        with:
+          pattern: calendar-*
+          path: _site
+          merge-multiple: true
+
+      - name: Kontroller kalenderartifakt
+        run: |
+          if ! find _site -type f -name '*.ics' | grep -q .; then
+            echo "Fann ingen ICS-filer i kalenderartifaktet." >&2
+            exit 1
+          fi
+
+      - name: Last opp Pages-artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site/
+
+      - name: Deploy til GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
