@@ -4,12 +4,15 @@ on:
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 concurrency:
-  group: update-bir-calendar
+  group: update-bir-calendar-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'production' }}
   cancel-in-progress: false
 
 jobs:
@@ -40,8 +43,30 @@ jobs:
       - name: Køyr testar
         run: uv run pytest -q
 
+  auto-merge:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Hent Dependabot-metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Slå på auto-merge for uv patch/minor
+        if: steps.metadata.outputs.package-ecosystem == 'uv' && (steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
+
   update:
     needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-slim
     timeout-minutes: 15
     environment: ${{ matrix.calendar }}
@@ -137,6 +162,7 @@ jobs:
 
   deploy:
     needs: update
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-slim
     timeout-minutes: 10
     permissions:
