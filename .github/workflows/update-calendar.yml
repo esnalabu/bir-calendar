@@ -173,7 +173,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Last ned kalenderartifakt
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: calendar-*
           path: _site
