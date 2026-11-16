@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
-from icalendar import Calendar, Event
+from icalendar import Calendar, Event, vDuration
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -714,8 +714,12 @@ def build_calendar(
     calendar.add("x-wr-calname", "BIR tømmedager")
     calendar.add("x-wr-caldesc", "Tømmedagar for avfall")
     calendar.add("x-wr-timezone", "Europe/Oslo")
-    calendar.add("refresh-interval", "P1W", parameters={"VALUE": "DURATION"})
-    calendar.add("x-published-ttl", "P1W")
+    calendar.add(
+        "refresh-interval",
+        vDuration(timedelta(weeks=1)),
+        parameters={"VALUE": "DURATION"},
+    )
+    calendar.add("x-published-ttl", vDuration(timedelta(weeks=1)))
 
     for pickup in sorted(
         pickups, key=lambda item: (item.day, category_label(item.category))

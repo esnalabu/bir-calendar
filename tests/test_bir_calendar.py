@@ -262,6 +262,9 @@ def test_build_calendar_is_generic_and_all_day():
     assert "Testvegen" not in content
     assert "test-r-id" not in content
 
+    assert "REFRESH-INTERVAL;VALUE=DURATION:P7D" in content
+    assert "X-PUBLISHED-TTL:P7D" in content
+
     uc.validate_private_calendar(
         content,
         [
