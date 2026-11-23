@@ -217,14 +217,35 @@ def parse_day_month(text: str, reference: date) -> date | None:
     month = MONTHS.get(match.group(2).casefold())
     if month is None:
         return None
-    for year in (reference.year, reference.year + 1):
+
+    candidates: list[date] = []
+    for year in (reference.year - 1, reference.year, reference.year + 1):
         try:
-            candidate = date(year, month, day)
+            candidates.append(date(year, month, day))
         except ValueError:
             continue
-        if candidate >= reference:
-            return candidate
-    return None
+    if not candidates:
+        return None
+
+    nearby = [
+        candidate
+        for candidate in candidates
+        if candidate.year == reference.year
+        and abs(candidate.month - reference.month) <= 1
+    ]
+    if nearby:
+        return max(nearby)
+
+    future = [candidate for candidate in candidates if candidate >= reference]
+    return min(future) if future else None
+
+
+def align_schedule_date(day: date, interval_weeks: int, reference: date) -> date:
+    aligned = day
+    step = timedelta(weeks=max(1, interval_weeks))
+    while aligned < reference:
+        aligned += step
+    return aligned
 
 
 def parse_month_title(text: str) -> tuple[int, int] | None:
@@ -366,6 +387,7 @@ def parse_address_page(html: str, reference: date) -> list[Schedule]:
             interval, weekday = frequency
         if weekday != next_date.weekday():
             weekday = next_date.weekday()
+        next_date = align_schedule_date(next_date, interval, reference)
 
         existing = schedules.get(category)
         if existing is None or next_date < existing.next_date:
@@ -462,15 +484,28 @@ def project_pickups(
                     day=day, category=category, source="observed"
                 )
 
-        day = anchor
-        while True:
-            day += timedelta(weeks=interval)
-            if day > horizon_end:
-                break
-            if day >= today:
+        step = timedelta(weeks=interval)
+        while anchor > horizon_end:
+            anchor -= step
+        while anchor < today:
+            anchor += step
+        while anchor > horizon_end:
+            anchor -= step
+
+        if today <= anchor <= horizon_end:
+            day = anchor
+            while day >= today:
                 result[(category, day)] = Pickup(
                     day=day, category=category, source="projected"
                 )
+                day -= step
+
+            day = anchor + step
+            while day <= horizon_end:
+                result[(category, day)] = Pickup(
+                    day=day, category=category, source="projected"
+                )
+                day += step
 
     return sorted(
         result.values(),
@@ -486,6 +521,23 @@ def filter_pickups(
         return list(pickups)
     allowed = set(categories)
     return [pickup for pickup in pickups if pickup.category in allowed]
+
+
+def check_min_events(pickups: Sequence[Pickup], min_events: int) -> None:
+    if len(pickups) >= min_events:
+        return
+    counts: dict[str, int] = {}
+    for pickup in pickups:
+        counts[pickup.category] = counts.get(pickup.category, 0) + 1
+    summary = ", ".join(
+        f"{category_label(category)}={count}"
+        for category, count in sorted(counts.items())
+    )
+    if summary:
+        warning(f"Få tømmedagar etter filtrering: {summary}.")
+    raise RuntimeError(
+        f"Fann berre {len(pickups)} tømmedagar, kravde {min_events}."
+    )
 
 
 def build_session() -> requests.Session:
@@ -969,20 +1021,19 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
                 extra_pickups: list[Pickup] = []
-                if not api_pickups:
-                    try:
-                        calendar_html = client.fetch_text(
-                            TOEMMEKALENDER_URL,
-                            params={"rId": property_id},
-                        )
-                        extra_pickups = parse_toemmekalender(
-                            calendar_html, today
-                        )
-                    except Exception as exc:
-                        warning(
-                            "Klarte ikkje å lese tømmekalenderen: "
-                            f"{safe_error(exc, private_values)}"
-                        )
+                try:
+                    calendar_html = client.fetch_text(
+                        TOEMMEKALENDER_URL,
+                        params={"rId": property_id},
+                    )
+                    extra_pickups = parse_toemmekalender(
+                        calendar_html, today
+                    )
+                except Exception as exc:
+                    warning(
+                        "Klarte ikkje å lese tømmekalenderen: "
+                        f"{safe_error(exc, private_values)}"
+                    )
 
                 pickups = filter_pickups(
                     project_pickups(
@@ -994,11 +1045,7 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     calendar.categories,
                 )
-                if len(pickups) < args.min_events:
-                    raise RuntimeError(
-                        f"Fann berre {len(pickups)} tømmedagar, "
-                        f"kravde {args.min_events}."
-                    )
+                check_min_events(pickups, args.min_events)
 
                 content = build_calendar(
                     pickups,

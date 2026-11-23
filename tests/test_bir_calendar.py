@@ -473,3 +473,145 @@ def test_load_config_rejects_unknown_category(tmp_path, monkeypatch):
 def test_horizon_end_covers_three_calendar_months():
     assert uc.horizon_end_for(date(2026, 11, 7), 3) == date(2027, 1, 31)
     assert uc.horizon_end_for(date(2026, 1, 31), 3) == date(2026, 3, 31)
+
+
+LATE_TODAY = date(2026, 11, 23)
+
+
+def test_parse_day_month_keeps_stale_date_in_current_month():
+    assert uc.parse_day_month("9. nov", LATE_TODAY) == date(2026, 11, 9)
+
+
+def test_parse_address_page_aligns_stale_dates():
+    schedules = {
+        schedule.category: schedule
+        for schedule in uc.parse_address_page(
+            read_fixture("address_page.html"), LATE_TODAY
+        )
+    }
+
+    assert schedules["restavfall"].next_date == date(2026, 11, 23)
+    assert schedules["matavfall"].next_date == date(2026, 11, 25)
+    assert schedules["papir"].next_date == date(2026, 12, 10)
+    assert schedules["glass"].next_date == date(2027, 1, 15)
+
+
+def test_project_pickups_recovers_from_out_of_horizon_anchor():
+    schedules = [uc.Schedule("restavfall", date(2027, 11, 9), 1, 0)]
+
+    pickups = uc.project_pickups(
+        [], schedules, [], LATE_TODAY, HORIZON_END
+    )
+
+    assert len(pickups) > 4
+    assert all(
+        LATE_TODAY <= pickup.day <= HORIZON_END for pickup in pickups
+    )
+
+
+def test_project_pickups_with_partial_api_and_fallback():
+    api_pickups = uc.parse_api_pickups(
+        [
+            {"dato": "2026-11-23T00:00:00", "fraksjon": "Restavfall"},
+            {"dato": "2026-11-30T00:00:00", "fraksjon": "Restavfall"},
+        ]
+    )
+    schedules = uc.parse_address_page(
+        read_fixture("address_page.html"), LATE_TODAY
+    )
+    extra_pickups = uc.parse_toemmekalender(
+        read_fixture("toemmekalender.html"), LATE_TODAY
+    )
+
+    pickups = uc.filter_pickups(
+        uc.project_pickups(
+            api_pickups, schedules, extra_pickups, LATE_TODAY, HORIZON_END
+        ),
+        ("restavfall", "papir", "glass"),
+    )
+
+    assert len(pickups) >= 4
+
+
+def test_check_min_events_reports_count_and_categories(capsys):
+    pickups = [
+        uc.Pickup(date(2026, 11, 23), "restavfall", "api"),
+        uc.Pickup(date(2026, 11, 30), "restavfall", "api"),
+    ]
+
+    with pytest.raises(
+        RuntimeError, match=r"Fann berre 2 tømmedagar, kravde 4\."
+    ):
+        uc.check_min_events(pickups, 4)
+    assert "Restavfall=2" in capsys.readouterr().err
+
+    uc.check_min_events(pickups, 2)
+
+
+def test_main_uses_fallback_even_with_partial_api(tmp_path, monkeypatch):
+    config = tmp_path / "calendars.toml"
+    config.write_text(
+        "\n".join(
+            [
+                "[[calendars]]",
+                'name = "Testkalender"',
+                'address = "Testvegen 1"',
+                'calendar_id = "test-calendar-id"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "BIR_ADDRESS",
+        "BIR_CALENDAR_ID",
+        "BIR_RID",
+        "BIR_CATEGORIES",
+        "CALENDAR_MONTHS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return LATE_TODAY
+
+    class FakeClient:
+        def __init__(self):
+            self.fetched = []
+
+        def resolve_property(self, address, r_id):
+            return "test-property-id", "Testvegen 1"
+
+        def get_pickups(self, property_id, date_from, date_to):
+            return [
+                uc.Pickup(date(2026, 11, 23), "restavfall", "api"),
+                uc.Pickup(date(2026, 11, 30), "restavfall", "api"),
+            ]
+
+        def fetch_text(self, url, params=None):
+            self.fetched.append(url)
+            if url == uc.ADDRESS_PAGE_URL:
+                return read_fixture("address_page.html")
+            if url == uc.TOEMMEKALENDER_URL:
+                return read_fixture("toemmekalender.html")
+            raise AssertionError(url)
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(uc, "date", FixedDate)
+    monkeypatch.setattr(uc, "BirClient", lambda: fake_client)
+    output = tmp_path / "calendar.ics"
+
+    result = uc.main(
+        [
+            "--config",
+            str(config),
+            "--output",
+            str(output),
+            "--min-events",
+            "4",
+        ]
+    )
+
+    assert result == 0
+    assert uc.TOEMMEKALENDER_URL in fake_client.fetched
+    assert output.exists()
