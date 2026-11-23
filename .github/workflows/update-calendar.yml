@@ -160,17 +160,11 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  deploy:
+  build-pages:
     needs: update
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-slim
     timeout-minutes: 10
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Last ned kalenderartifakt
         uses: actions/download-artifact@v8
@@ -191,6 +185,18 @@ jobs:
         with:
           path: _site/
 
+  deploy:
+    needs: build-pages
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy til GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
